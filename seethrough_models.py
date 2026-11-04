@@ -56,6 +56,10 @@ def is_complete(path, repo_id=None):
     marker = _marker_repo(path)
     if marker is not None:
         return repo_id is None or marker == repo_id
+    # snapshot_download keeps its bookkeeping in .cache/huggingface; a folder with
+    # that but no marker is an interrupted download, not a finished model.
+    if os.path.isdir(os.path.join(path, ".cache", "huggingface")):
+        return False
     # folders a user placed by hand (git clone, copied from another PC)
     unet = os.path.join(path, "unet")
     return (os.path.isfile(os.path.join(path, "model_index.json")) and os.path.isdir(unet)

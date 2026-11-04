@@ -12,10 +12,16 @@ const { api } = window.comfyAPI.api;
 let agPsdLoaded = false;
 let agPsdLoadPromise = null;
 
+// ComfyUI loads extensions as ES modules, where document.currentScript is null,
+// so find the bundle next to this file through import.meta.url instead.
 const _ownScriptDir = (() => {
-    const src = document.currentScript?.src;
-    if (src) return src.substring(0, src.lastIndexOf("/") + 1);
-    return null;
+    try {
+        return new URL(".", import.meta.url).href;
+    } catch (e) {
+        const src = document.currentScript?.src;
+        if (src) return src.substring(0, src.lastIndexOf("/") + 1);
+        return null;
+    }
 })();
 
 async function ensureAgPsdLoaded() {
@@ -38,6 +44,7 @@ async function ensureAgPsdLoaded() {
             document.head.appendChild(script);
         } else {
             const variants = [
+                "ComfyUI-SeeThrough-Easy",
                 "ComfyUI-See-through",
                 "comfyui-see-through",
                 "ComfyUI-see-through",
