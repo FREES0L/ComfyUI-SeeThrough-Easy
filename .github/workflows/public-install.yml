@@ -1,0 +1,60 @@
+name: Public install test
+
+# Runs the exact line the README tells people to paste, on a clean Windows
+# machine: installer from raw.githubusercontent.com, nodes from the GitHub zip,
+# all ~13 GB of models. Run by hand (Actions tab, "Run workflow") after a release,
+# or automatically when this file changes.
+
+on:
+  workflow_dispatch:
+  push:
+    paths: [.github/workflows/public-install.yml]
+
+jobs:
+  public-install:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Paste the README line
+        shell: powershell
+        run: irm https://raw.githubusercontent.com/FREES0L/ComfyUI-SeeThrough-Easy/master/windows/install.ps1 | iex
+
+      - name: Check what a user ends up with
+        shell: powershell
+        run: |
+          $c = "C:\SeeThrough\ComfyUI_windows_portable\ComfyUI"
+          foreach ($f in @("custom_nodes\ComfyUI-SeeThrough-Easy\nodes.py",
+                           "models\SeeThrough\seethroughv0.0.2_layerdiff3d\.seethrough_complete",
+                           "models\SeeThrough\seethroughv0.0.1_marigold\.seethrough_complete",
+                           "user\default\workflows\SeeThrough-Easy.json",
+                           "input\seethrough_example.png")) {
+            if (-not (Test-Path (Join-Path $c $f))) { throw "missing $f" }
+            Write-Host "ok  $f"
+          }
+          foreach ($f in @("C:\SeeThrough\Start SeeThrough.bat", "C:\SeeThrough\Update SeeThrough.bat",
+                           "$([Environment]::GetFolderPath('Desktop'))\SeeThrough.lnk",
+                           "$([Environment]::GetFolderPath('Desktop'))\SeeThrough results.lnk")) {
+            if (-not (Test-Path $f)) { throw "missing $f" }
+            Write-Host "ok  $f"
+          }
+          "{0:N1} GB of models" -f ((Get-ChildItem "$c\models\SeeThrough" -Recurse -File | Measure-Object Length -Sum).Sum / 1GB)
+
+      - name: Start ComfyUI and check the nodes load
+        shell: powershell
+        run: |
+          $p = "C:\SeeThrough\ComfyUI_windows_portable"
+          $proc = Start-Process -FilePath "$p\python_embeded\python.exe" `
+            -ArgumentList "-s", "ComfyUI\main.py", "--cpu", "--port", "8188", "--disable-auto-launch" `
+            -WorkingDirectory $p -RedirectStandardOutput "$p\out.log" -RedirectStandardError "$p\err.log" -PassThru
+          $ok = $false
+          for ($i = 0; $i -lt 90; $i++) {
+            Start-Sleep 5
+            try { $info = Invoke-RestMethod "http://127.0.0.1:8188/object_info"; $ok = $true; break } catch {}
+            if ($proc.HasExited) { break }
+          }
+          Get-Content "$p\err.log" -Tail 40
+          if (-not $ok) { throw "ComfyUI did not start" }
+          $names = $info.PSObject.Properties.Name | Where-Object { $_ -like "SeeThrough_*" }
+          Write-Host "SeeThrough nodes: $($names -join ', ')"
+          if ($names.Count -ne 8) { throw "expected 8 SeeThrough nodes, got $($names.Count)" }
+          Stop-Process -Id $proc.Id -Force
