@@ -41,20 +41,38 @@ def repo_dir(models_dir, repo_id):
     return os.path.join(models_dir, repo_id.split("/")[-1])
 
 
-def is_complete(path):
-    return os.path.isfile(os.path.join(path, COMPLETE_MARKER)) or (
-        # folders a user placed by hand (git clone, copy from another PC)
-        os.path.isfile(os.path.join(path, "model_index.json"))
-        and os.path.isdir(os.path.join(path, "unet"))
-        and any(f.endswith(".safetensors") for _, _, fs in os.walk(os.path.join(path, "unet")) for f in fs)
-    )
+def _marker_repo(path):
+    try:
+        with open(os.path.join(path, COMPLETE_MARKER), encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def is_complete(path, repo_id=None):
+    """True when path holds a finished model. With repo_id, a folder this tool
+    downloaded must also have come from that exact repo, so a same-named repo
+    from another owner never gets mixed up with it."""
+    marker = _marker_repo(path)
+    if marker is not None:
+        return repo_id is None or marker == repo_id
+    # folders a user placed by hand (git clone, copied from another PC)
+    unet = os.path.join(path, "unet")
+    return (os.path.isfile(os.path.join(path, "model_index.json")) and os.path.isdir(unet)
+            and any(f.endswith(".safetensors") for _, _, fs in os.walk(unet) for f in fs))
 
 
 def ensure_repo(models_dir, repo_id):
     """Download a Hugging Face repo into models_dir unless it is already there. Returns its folder."""
     target = repo_dir(models_dir, repo_id)
-    if is_complete(target):
+    if is_complete(target, repo_id):
         return target
+    other = _marker_repo(target)
+    if other is not None and other != repo_id:
+        # same folder name, different owner: keep both apart
+        target = os.path.join(models_dir, repo_id.replace("/", "__"))
+        if is_complete(target, repo_id):
+            return target
     from huggingface_hub import snapshot_download
 
     size = REPO_SIZES_GB.get(repo_id)

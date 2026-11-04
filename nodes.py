@@ -265,7 +265,7 @@ def _resolve_model_path(model_name, auto_download=False):
     if basename != model_name:
         for base in bases:
             local_basename = os.path.join(base, basename)
-            if os.path.isdir(local_basename) and is_complete(local_basename):
+            if os.path.isdir(local_basename) and is_complete(local_basename, model_name):
                 return local_basename
         if auto_download:
             # Download into models/SeeThrough/<repo name> instead of the hidden
