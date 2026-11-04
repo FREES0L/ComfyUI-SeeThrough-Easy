@@ -11,7 +11,7 @@ You need:
 - Windows 10 or 11, 64-bit
 - An **Nvidia** graphics card with 8 GB or more, or an **AMD Radeon RX 7000 / 9000** series card
 - 16 GB of RAM or more (32 GB is comfortable)
-- About 30 GB of free disk space on `C:`
+- About 25 GB of free disk space on `C:`
 - An up-to-date graphics driver ([Nvidia](https://www.nvidia.com/drivers), [AMD](https://www.amd.com/en/support/download/drivers.html))
 
 Then:
@@ -31,6 +31,8 @@ Prefer double-clicking? Download [`Install-SeeThrough.bat`](https://raw.githubus
 Everything goes into `C:\SeeThrough`. To uninstall, delete that folder and the two desktop icons.
 
 If the install stops halfway (internet dropped, PC restarted), run the same line again. It picks up where it left off.
+
+If the installer says it can't find a graphics card but there is one, name it in front of the same line: `$env:SEETHROUGH_GPU = "nvidia"; ` (or `"amd"`) followed by the `irm ...` line.
 
 ## Use it
 

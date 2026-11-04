@@ -21,6 +21,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: A mistyped SEETHROUGH_GPU stops the install
+        if: matrix.gpu == 'amd'
+        shell: powershell
+        env:
+          SEETHROUGH_GPU: nvidai
+        run: |
+          $stopped = $false
+          try { & .\windows\install.ps1 -InstallDir C:\TypoTest -NodeSource $PWD -SkipModels -NoShortcut } catch { $stopped = $true; Write-Host "stopped as expected: $_" }
+          if (-not $stopped) { throw "install went ahead despite SEETHROUGH_GPU=nvidai" }
+          if (Test-Path C:\TypoTest) { throw "it created files before stopping" }
+
       - name: Run the installer
         shell: powershell
         run: |
@@ -54,6 +65,7 @@ jobs:
             if ($proc.HasExited) { break }
           }
           Get-Content "$p\comfy_err.log" -Tail 60
+          "Installed size: {0:N1} GB" -f ((Get-ChildItem "C:\SeeThrough" -Recurse -File -Force | Measure-Object Length -Sum).Sum / 1GB)
           if (-not $ok) { throw "ComfyUI did not start" }
           $names = $info.PSObject.Properties.Name | Where-Object { $_ -like "SeeThrough_*" }
           Write-Host "SeeThrough nodes: $($names -join ', ')"
