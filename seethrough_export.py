@@ -7,8 +7,8 @@ Turns the parts the Post Process node returns into a ready-to-use layer set:
   * layers are numbered back to front in a draw order that matches the input
     image (see ORDER MODES), not just See-through's per-part depth sort;
   * writes layers/NN-<part>.png, layers.json, composite.png, compare.png,
-    contact-sheet.png, psd_info.json (for the Download PSD button) and a zip
-    of all of it.
+    contact-sheet.png, psd_info.json, <name>.psd (one layer per part, each
+    cropped to its content and placed on the canvas) and a zip of all of it.
 
 ORDER MODES
   depth       See-through's own rule: per-part depth median, far to near.
@@ -29,6 +29,8 @@ import zipfile
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+
+from .seethrough_psd import write_psd
 
 ORDER_MODES = ["visibility", "face", "depth"]
 
@@ -161,7 +163,7 @@ def order_visibility(parts, src, min_px=150, margin=24, share=0.6):
     return [parts[k] for k in out], log
 
 
-def export_layers(tag2pinfo, resolution, source_rgb, out_dir, order="visibility", name="seethrough"):
+def export_layers(tag2pinfo, resolution, source_rgb, out_dir, order="visibility", name="seethrough", save_psd=True):
     """Write the layer set into out_dir. source_rgb: HxWx3 uint8 input image. Returns layers.json content."""
     res = int(resolution)
     sh, sw = source_rgb.shape[:2]
@@ -235,6 +237,8 @@ def export_layers(tag2pinfo, resolution, source_rgb, out_dir, order="visibility"
     }
     if order_log:
         meta["visibility_votes"] = order_log
+    if save_psd:
+        meta["psd"] = f"{name}.psd"
     with open(os.path.join(out_dir, "layers.json"), "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
 
@@ -273,6 +277,12 @@ def export_layers(tag2pinfo, resolution, source_rgb, out_dir, order="visibility"
         sheet.paste(bg, (ox + 2, oy + 32))
         d.text((ox + 6, oy + 6), f"{e['order']:02d} {e['part']}  {w}x{h}px", fill=(235, 235, 235), font=f)
     sheet.save(os.path.join(out_dir, "contact-sheet.png"), optimize=True)
+
+    if save_psd:
+        write_psd(os.path.join(out_dir, f"{name}.psd"), cw, ch,
+                  [(p["part"], p["rgba"][p["bbox"][1]:p["bbox"][3], p["bbox"][0]:p["bbox"][2]],
+                    p["bbox"][0], p["bbox"][1]) for p in parts],
+                  comp)
 
     # zip of the whole set, handy for sending to someone
     zip_path = out_dir.rstrip("/\\") + ".zip"
