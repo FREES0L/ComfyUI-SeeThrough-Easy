@@ -74,7 +74,7 @@
         "",
         "none",
         true,
-        "off",
+        "auto",
         true
       ]
     },
@@ -109,7 +109,7 @@
         "layerdifforg/seethroughv0.0.1_marigold",
         "none",
         true,
-        "off",
+        "auto",
         true
       ]
     },
