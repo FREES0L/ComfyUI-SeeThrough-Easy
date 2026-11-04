@@ -71,7 +71,7 @@ def _pascal_name(name):
 
 def _unicode_name_block(name):
     s = name.encode("utf-16-be")
-    body = struct.pack(">I", len(name)) + s
+    body = struct.pack(">I", len(s) // 2) + s  # count in UTF-16 code units
     body = _pad(body, 4)
     return b"8BIM" + b"luni" + struct.pack(">I", len(body)) + body
 
