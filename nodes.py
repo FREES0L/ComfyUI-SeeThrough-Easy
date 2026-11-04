@@ -79,12 +79,67 @@ for _key, _mod in _st_conflict_backup.items():
         sys.modules[_key] = _mod
 del _st_conflict_backup
 
+from .seethrough_models import ensure_repo, ensure_lama, is_complete
+from .seethrough_export import ORDER_MODES, export_layers
+
 DEFAULT_LAYERDIFF_REPO = "layerdifforg/seethroughv0.0.2_layerdiff3d"
 DEFAULT_LAYERDIFF_NF4_REPO = "24yearsold/seethroughv0.0.2_layerdiff3d_nf4"
 DEFAULT_DEPTH_REPO = "layerdifforg/seethroughv0.0.1_marigold"
 DEFAULT_DEPTH_NF4_REPO = "24yearsold/seethroughv0.0.1_marigold_nf4"
 
-QUANT_MODES = ["none", "nf4"]
+QUANT_MODES = ["auto", "none", "nf4"]
+OFFLOAD_MODES = ["auto", "on", "off"]
+
+# "auto" picks per graphics card. Measured on a 12 GB RTX 4070 Super at 1280:
+# bf16 without offload runs out of memory, bf16 with group offload peaks at
+# 7.7 GB for ComfyUI. Cards under 10 GB get the 4-bit (NF4) models instead.
+AUTO_OFFLOAD_BELOW_GB = 20
+AUTO_NF4_BELOW_GB = 10
+
+
+def _total_vram_gb():
+    try:
+        dev = mm.get_torch_device()
+        if dev.type == "cpu":
+            return 0.0
+        return mm.get_total_memory(dev) / (1024 ** 3)
+    except Exception:
+        return 0.0
+
+
+def _bitsandbytes_ok():
+    try:
+        import bitsandbytes  # noqa: F401
+        return torch.cuda.is_available() and getattr(torch.version, "hip", None) is None
+    except Exception:
+        return False
+
+
+def _resolve_quant(quant_mode):
+    if quant_mode in (True, False):
+        return "none"
+    if quant_mode != "auto":
+        return quant_mode
+    vram = _total_vram_gb()
+    if 0 < vram < AUTO_NF4_BELOW_GB:
+        if _bitsandbytes_ok():
+            print(f"[SeeThrough] quant_mode=auto: {vram:.1f} GB card, using the 4-bit (NF4) models", flush=True)
+            return "nf4"
+        print(f"[SeeThrough] quant_mode=auto: {vram:.1f} GB card but bitsandbytes is unavailable "
+              f"(needs an Nvidia card), staying on bf16. This may run out of memory.", flush=True)
+    return "none"
+
+
+def _resolve_offload(group_offload):
+    """Accepts the old BOOLEAN widget values too, so upstream workflows still load."""
+    if group_offload is True or group_offload == "on":
+        return True
+    if group_offload is False or group_offload == "off":
+        return False
+    vram = _total_vram_gb()
+    use = vram < AUTO_OFFLOAD_BELOW_GB
+    print(f"[SeeThrough] group_offload=auto: {vram:.1f} GB card, offload {'on' if use else 'off'}", flush=True)
+    return use
 
 _NF4_REPO_MAP = {
     DEFAULT_LAYERDIFF_REPO: DEFAULT_LAYERDIFF_NF4_REPO,
@@ -107,6 +162,16 @@ def _model_base_dirs():
 
 try:
     os.makedirs(_model_base_dirs()[0], exist_ok=True)
+except OSError:
+    pass
+
+# Put the example picture the bundled workflow opens with into ComfyUI/input,
+# so a fresh install can press Run straight away.
+try:
+    import shutil as _shutil
+    _example_dst = os.path.join(folder_paths.get_input_directory(), "seethrough_example.png")
+    if not os.path.exists(_example_dst):
+        _shutil.copyfile(os.path.join(CURRENT_DIR, "assets", "seethrough_example.png"), _example_dst)
 except OSError:
     pass
 
@@ -183,7 +248,7 @@ def _scan_model_dirs():
     return found
 
 
-def _resolve_model_path(model_name):
+def _resolve_model_path(model_name, auto_download=False):
     bases = _model_base_dirs()
     if model_name == ".":
         for base in bases:
@@ -198,6 +263,14 @@ def _resolve_model_path(model_name):
     # check if just the repo part exists locally (git clone creates dirs without the org prefix).
     basename = model_name.split("/")[-1]
     if basename != model_name:
+        for base in bases:
+            local_basename = os.path.join(base, basename)
+            if os.path.isdir(local_basename) and is_complete(local_basename):
+                return local_basename
+        if auto_download:
+            # Download into models/SeeThrough/<repo name> instead of the hidden
+            # Hugging Face cache, so the files are visible and portable.
+            return ensure_repo(bases[0], model_name)
         for base in bases:
             local_basename = os.path.join(base, basename)
             if os.path.isdir(local_basename):
@@ -284,16 +357,16 @@ def _compute_depth_median(part_dict):
     return part_dict
 
 
-def _crop_head(img, xywh):
+def _crop_head(img, xywh, pad=0.2):
     x, y, w, h = xywh
     ih, iw = img.shape[:2]
     x1, y1, x2, y2 = x, y, x + w, y + h
     if w < iw // 2:
-        px = min(iw - x - w, x, w // 5)
+        px = min(iw - x - w, x, int(w * pad))
         x1 = min(max(x - px, 0), iw)
         x2 = min(max(x + w + px, 0), iw)
     if h < ih // 2:
-        py = min(ih - y - h, y, h // 5)
+        py = min(ih - y - h, y, int(h * pad))
         y2 = min(max(y + h + py, 0), ih)
         y1 = min(max(y - py, 0), ih)
     return img[y1:y2, x1:x2], (x1, y1, x2, y2)
@@ -324,12 +397,12 @@ class SeeThrough_LoadLayerDiffModel:
                                         "tooltip": "Optional path to a custom VAE checkpoint (.safetensors)"}),
                 "unet_ckpt": ("STRING", {"default": "",
                                          "tooltip": "Optional path to a custom UNet checkpoint"}),
-                "quant_mode": (QUANT_MODES, {"default": "none",
-                                              "tooltip": "Quantization mode: 'none' for bf16, 'nf4' for 4-bit NormalFloat quantization (~8GB VRAM). Requires bitsandbytes."}),
+                "quant_mode": (QUANT_MODES, {"default": "auto",
+                                              "tooltip": "auto: 4-bit (NF4) on Nvidia cards under 10 GB, bf16 otherwise. 'none' = bf16, 'nf4' = 4-bit (~8GB VRAM, needs bitsandbytes, Nvidia only)."}),
                 "cache_tag_embeds": ("BOOLEAN", {"default": True,
                                                   "tooltip": "Pre-compute and cache tag embeddings, then unload text encoders to save VRAM"}),
-                "group_offload": ("BOOLEAN", {"default": False,
-                                               "tooltip": "Enable group offload to reduce peak VRAM (~10GB) at cost of ~1.5x slower speed"}),
+                "group_offload": (OFFLOAD_MODES, {"default": "auto",
+                                               "tooltip": "Keep most of the model in system RAM to fit smaller cards, ~1.5x slower. auto: on for cards under 20 GB."}),
                 "auto_download": ("BOOLEAN", {"default": True,
                                                "tooltip": "If model is not found locally, download from HuggingFace. Disable to force local-only and error out instead of downloading."}),
             },
@@ -340,7 +413,9 @@ class SeeThrough_LoadLayerDiffModel:
     FUNCTION = "load_model"
     CATEGORY = "SeeThrough"
 
-    def load_model(self, model, vae_ckpt="", unet_ckpt="", quant_mode="none", cache_tag_embeds=True, group_offload=False, auto_download=True):
+    def load_model(self, model, vae_ckpt="", unet_ckpt="", quant_mode="auto", cache_tag_embeds=True, group_offload="auto", auto_download=True):
+        quant_mode = _resolve_quant(quant_mode)
+        group_offload = _resolve_offload(group_offload)
         use_nf4 = quant_mode == "nf4"
         dtype = torch.bfloat16
 
@@ -348,7 +423,7 @@ class SeeThrough_LoadLayerDiffModel:
             model = _NF4_REPO_MAP[model]
             print(f"[SeeThrough] quant_mode=nf4: auto-switched to NF4 repo {model}", flush=True)
 
-        pretrained = _resolve_model_path(model)
+        pretrained = _resolve_model_path(model, auto_download=auto_download)
         is_local = os.path.isdir(pretrained)
         local_only = is_local or not auto_download
 
@@ -396,7 +471,7 @@ class SeeThrough_LoadLayerDiffModel:
         if group_offload:
             if hasattr(pipeline, 'enable_group_offload'):
                 print("[SeeThrough] Enabling group offload for LayerDiff pipeline", flush=True)
-                pipeline.enable_group_offload('cuda', num_blocks_per_group=1)
+                pipeline.enable_group_offload(mm.get_torch_device(), num_blocks_per_group=1)
                 pipeline._st_group_offload = True
             else:
                 print("[SeeThrough] WARNING: group_offload requires diffusers >= 0.37.0, skipping. Please upgrade: pip install diffusers>=0.37.0", flush=True)
@@ -426,12 +501,12 @@ class SeeThrough_LoadDepthModel:
                                        "tooltip": "HuggingFace repo ID or local model folder in models/SeeThrough/"}),
             },
             "optional": {
-                "quant_mode": (QUANT_MODES, {"default": "none",
-                                              "tooltip": "Quantization mode: 'none' for bf16, 'nf4' for 4-bit NormalFloat quantization. Requires bitsandbytes."}),
+                "quant_mode": (QUANT_MODES, {"default": "auto",
+                                              "tooltip": "auto: 4-bit (NF4) on Nvidia cards under 10 GB, bf16 otherwise. 'none' = bf16, 'nf4' = 4-bit (needs bitsandbytes, Nvidia only)."}),
                 "cache_tag_embeds": ("BOOLEAN", {"default": True,
                                                   "tooltip": "Pre-compute empty text embedding and unload text encoder to save VRAM"}),
-                "group_offload": ("BOOLEAN", {"default": False,
-                                               "tooltip": "Enable group offload to reduce peak VRAM at cost of slower speed"}),
+                "group_offload": (OFFLOAD_MODES, {"default": "auto",
+                                               "tooltip": "Keep most of the model in system RAM to fit smaller cards, slower. auto: on for cards under 20 GB."}),
                 "auto_download": ("BOOLEAN", {"default": True,
                                                "tooltip": "If model is not found locally, download from HuggingFace. Disable to force local-only and error out instead of downloading."}),
             },
@@ -442,7 +517,9 @@ class SeeThrough_LoadDepthModel:
     FUNCTION = "load_model"
     CATEGORY = "SeeThrough"
 
-    def load_model(self, model, quant_mode="none", cache_tag_embeds=True, group_offload=False, auto_download=True):
+    def load_model(self, model, quant_mode="auto", cache_tag_embeds=True, group_offload="auto", auto_download=True):
+        quant_mode = _resolve_quant(quant_mode)
+        group_offload = _resolve_offload(group_offload)
         use_nf4 = quant_mode == "nf4"
         dtype = torch.bfloat16
 
@@ -450,7 +527,7 @@ class SeeThrough_LoadDepthModel:
             model = _NF4_REPO_MAP[model]
             print(f"[SeeThrough] quant_mode=nf4: auto-switched to NF4 repo {model}", flush=True)
 
-        pretrained = _resolve_model_path(model)
+        pretrained = _resolve_model_path(model, auto_download=auto_download)
         is_local = os.path.isdir(pretrained)
         local_only = is_local or not auto_download
 
@@ -471,7 +548,7 @@ class SeeThrough_LoadDepthModel:
         if group_offload:
             if hasattr(pipeline, 'enable_group_offload'):
                 print("[SeeThrough] Enabling group offload for Marigold pipeline", flush=True)
-                pipeline.enable_group_offload('cuda', num_blocks_per_group=1)
+                pipeline.enable_group_offload(mm.get_torch_device(), num_blocks_per_group=1)
                 pipeline._st_group_offload = True
             else:
                 print("[SeeThrough] WARNING: group_offload requires diffusers >= 0.37.0, skipping. Please upgrade: pip install diffusers>=0.37.0", flush=True)
@@ -500,6 +577,12 @@ class SeeThrough_GenerateLayers:
                 "resolution": ("INT", {"default": 1280, "min": 512, "max": 2048, "step": 64}),
                 "num_inference_steps": ("INT", {"default": 30, "min": 1, "max": 100}),
             },
+            "optional": {
+                # local patch: margin around the head box for the second (head) pass, as a
+                # fraction of the head size. 0.2 = upstream behaviour. Raise it when horns,
+                # ears or hats stick out of the head and come back clipped in headwear.
+                "head_crop_pad": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 1.0, "step": 0.05}),
+            },
         }
 
     RETURN_TYPES = ("SEETHROUGH_LAYERS", "IMAGE")
@@ -507,7 +590,7 @@ class SeeThrough_GenerateLayers:
     FUNCTION = "generate"
     CATEGORY = "SeeThrough"
 
-    def generate(self, image, layerdiff_model, seed=42, resolution=1280, num_inference_steps=30):
+    def generate(self, image, layerdiff_model, seed=42, resolution=1280, num_inference_steps=30, head_crop_pad=0.2):
         pipeline = layerdiff_model
         device = mm.get_torch_device()
         offload = torch.device("cpu")
@@ -594,7 +677,7 @@ class SeeThrough_GenerateLayers:
                 hx0, hy0, hw, hh = cv2.boundingRect(nz)
                 hx = int(hx0 * scale) - pad_pos[0]
                 hy = int(hy0 * scale) - pad_pos[1]
-                input_head, (hx1, hy1, hx2, hy2) = _crop_head(input_img, [hx, hy, int(hw * scale), int(hh * scale)])
+                input_head, (hx1, hy1, hx2, hy2) = _crop_head(input_img, [hx, hy, int(hw * scale), int(hh * scale)], pad=head_crop_pad)
                 hx1 = int(hx1 / scale + pad_pos[0] / scale)
                 hy1 = int(hy1 / scale + pad_pos[1] / scale)
                 ih, iw = input_head.shape[:2]
@@ -759,6 +842,7 @@ class SeeThrough_GenerateDepth:
         print(f"[SeeThrough] GenerateDepth complete: {len(depth_dict)} depth maps, Marigold offloaded to CPU", flush=True)
 
         result = SeeThrough_LayersDepthData(layer_dict, depth_dict, fullpage, resolution)
+        result.input_img = getattr(layers, "input_img", None)  # for SeeThrough Export Layers
 
         # Preview: blend with depth info
         preview_dict = {}
@@ -845,6 +929,8 @@ class SeeThrough_PostProcess:
                 part_info = tag2pinfo.pop("hair")
                 try:
                     inpaint_mode = "lama" if use_lama else "cv2"
+                    if use_lama:
+                        os.environ["SEETHROUGH_LAMA_CKPT"] = ensure_lama(_model_base_dirs()[0])
                     parts = cluster_inpaint_part(inpaint=inpaint_mode, **part_info)
                     parts.sort(key=lambda x: x["depth_median"])
                     tag2pinfo["hairf"] = parts[0]
@@ -884,7 +970,8 @@ class SeeThrough_PostProcess:
                     tag2pinfo[t]["depth_median"] = face_dm + 0.001
 
         frame_size = fullpage.shape[:2]
-        parts_data = {"tag2pinfo": tag2pinfo, "frame_size": frame_size}
+        parts_data = {"tag2pinfo": tag2pinfo, "frame_size": frame_size,
+                      "input_img": getattr(layers_depth, "input_img", None)}
 
         print(f"[SeeThrough] PostProcess complete: {len(tag2pinfo)} layers", flush=True)
         for tag, pinfo in sorted(tag2pinfo.items(), key=lambda x: x[1].get("depth_median", 1)):
@@ -1016,6 +1103,70 @@ class SeeThrough_PartsToLayers:
         return (document,)
 
 
+class SeeThrough_ExportLayers:
+    """Save the parts as a clean, ready-to-use layer set: full-canvas PNGs
+    numbered back to front in a draw order checked against the input image,
+    plus layers.json, preview sheets, a zip, and a Download PSD button."""
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "parts": ("SEETHROUGH_PARTS",),
+                "filename_prefix": ("STRING", {"default": "seethrough"}),
+                "order": (ORDER_MODES, {"default": "visibility",
+                                        "tooltip": "visibility: each overlapping pair is ordered by which part matches the input image (best). "
+                                                   "face: depth order with the face parts in anatomical order. depth: See-through's raw depth order."}),
+            },
+            "optional": {
+                "image": ("IMAGE", {"tooltip": "Input image to check the draw order against. Leave unconnected to use the one the parts came from."}),
+            },
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("folder",)
+    FUNCTION = "export"
+    CATEGORY = "SeeThrough"
+    OUTPUT_NODE = True
+
+    def export(self, parts, filename_prefix="seethrough", order="visibility", image=None):
+        import json
+
+        if image is not None:
+            src = (image[0].cpu().numpy() * 255).clip(0, 255).astype(np.uint8)[..., :3]
+        elif parts.get("input_img") is not None:
+            src = parts["input_img"][..., :3]
+        else:
+            raise ValueError("SeeThrough Export Layers: connect the input image to the 'image' input.")
+
+        prefix = "".join(c if c.isalnum() or c in "-_" else "_" for c in filename_prefix) or "seethrough"
+        name = f"{prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        out_root = folder_paths.get_output_directory()
+        rel_dir = os.path.join("seethrough", name)
+        out_dir = os.path.join(out_root, rel_dir)
+        os.makedirs(out_dir, exist_ok=True)
+
+        meta = export_layers(parts["tag2pinfo"], parts["frame_size"][0], src, out_dir, order=order, name=name)
+
+        # Info for the Download PSD button (same shape the Save PSD node writes).
+        cw, ch = meta["canvas"]["width"], meta["canvas"]["height"]
+        sub = rel_dir.replace(os.sep, "/")
+        psd_info = {"prefix": prefix, "timestamp": name[len(prefix) + 1:], "width": cw, "height": ch,
+                    "layers": [{"name": e["part"], "filename": os.path.basename(e["file"]),
+                                "subfolder": sub + "/layers",
+                                "left": 0, "top": 0, "right": cw, "bottom": ch} for e in meta["layers"]]}
+        with open(os.path.join(out_dir, "psd_info.json"), "w", encoding="utf-8") as f:
+            json.dump(psd_info, f, indent=2)
+        with open(os.path.join(out_root, "seethrough_export_info.log"), "w", encoding="utf-8") as f:
+            f.write(sub + "/psd_info.json")
+
+        print(f"[SeeThrough] Layers saved in {out_dir} and {out_dir}.zip", flush=True)
+        ui_images = [{"filename": fn, "subfolder": sub, "type": "output"}
+                     for fn in ("contact-sheet.png", "compare.png")]
+        return {"ui": {"images": ui_images, "seethrough_export": [sub + "/psd_info.json"]},
+                "result": (out_dir,)}
+
+
 NODE_CLASS_MAPPINGS = {
     "SeeThrough_LoadLayerDiffModel": SeeThrough_LoadLayerDiffModel,
     "SeeThrough_LoadDepthModel": SeeThrough_LoadDepthModel,
@@ -1024,6 +1175,7 @@ NODE_CLASS_MAPPINGS = {
     "SeeThrough_PostProcess": SeeThrough_PostProcess,
     "SeeThrough_SavePSD": SeeThrough_SavePSD,
     "SeeThrough_PartsToLayers": SeeThrough_PartsToLayers,
+    "SeeThrough_ExportLayers": SeeThrough_ExportLayers,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -1034,4 +1186,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "SeeThrough_PostProcess": "SeeThrough Post Process",
     "SeeThrough_SavePSD": "SeeThrough Save PSD",
     "SeeThrough_PartsToLayers": "SeeThrough Parts To Layers",
+    "SeeThrough_ExportLayers": "SeeThrough Export Layers (clean)",
 }

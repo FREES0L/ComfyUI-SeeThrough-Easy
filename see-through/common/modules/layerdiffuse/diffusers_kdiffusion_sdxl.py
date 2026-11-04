@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Union, List, Optional
 import gc
+import os
 
 import PIL.Image
 import numpy as np
@@ -117,7 +118,9 @@ class KDiffusionStableDiffusionXLPipeline(StableDiffusionXLImg2ImgPipeline):
                     "zero": (DPMSolverSinglestepScheduler, {"use_karras_sigmas": True, **config_zero}),
                 },
             }
-            model_id = "frankjoshua/juggernautXL_version6Rundiffusion"
+            # Bundled copy of the SDXL scheduler config from
+            # frankjoshua/juggernautXL_version6Rundiffusion, so loading needs no extra download.
+            model_id = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "assets", "sdxl_scheduler")
             scheduler_name = "DPMPP_2M_SDE"
             scheduler_config_name = "zero"
             scheduler_configs = schedulers[scheduler_name]

@@ -1,7 +1,10 @@
-diffusers>=0.25.0
+# diffusers 0.37+ is needed for group offload, which is what lets 12-16 GB cards run this.
+diffusers>=0.37.0
 peft>=0.18.0
 accelerate>=0.20.0
+huggingface_hub>=0.23.0
 opencv-python>=4.0.0
 scikit-learn>=1.0.0
-bitsandbytes>=0.49.2
 matplotlib
+# Optional, Nvidia only: enables the 4-bit (NF4) models for cards under 10 GB.
+# The Windows installer adds it on Nvidia machines. Manual install: pip install bitsandbytes>=0.49.2
