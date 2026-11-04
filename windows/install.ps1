@@ -105,6 +105,7 @@ if ($freeGB -lt $needGB) { Fail "Needs about $needGB GB free on $drive (ComfyUI 
 $cards = @(Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name })
 foreach ($c in $cards) { Info "Graphics: $c" }
 $vramGB = 0
+$gpuChosenByUser = ($Gpu -ne "auto")
 if ($Gpu -eq "auto") {
     $nv = $cards | Where-Object { $_ -match "NVIDIA" } | Select-Object -First 1
     $amd = $cards | Where-Object { $_ -match "AMD|Radeon" } | Select-Object -First 1
@@ -124,14 +125,14 @@ if ($Gpu -like "nvidia*") {
         $vramGB = [math]::Round([double]$parts[1].Trim() / 1024)
         Info "Nvidia driver $driver, $vramGB GB of video memory"
         $major = [int]($driver -split "\.")[0]
-        if ($Gpu -eq "nvidia" -and $major -lt 580) {
+        if ($Gpu -eq "nvidia" -and $major -lt 580 -and -not $gpuChosenByUser) {
             Info "Driver is older than 580, using the CUDA 12.6 build of ComfyUI (works with older drivers)."
             $Gpu = "nvidia_cu126"
         }
         if ($major -lt 560) { Warn "Your Nvidia driver is old ($driver). If ComfyUI fails to start, update it from nvidia.com/drivers." }
     } else {
         Warn "nvidia-smi not found; the Nvidia driver may be missing or very old. Install the latest driver from nvidia.com/drivers if anything fails."
-        $Gpu = "nvidia_cu126"
+        if (-not $gpuChosenByUser) { $Gpu = "nvidia_cu126" }
     }
     if ($vramGB -gt 0 -and $vramGB -lt 8) { Warn "$vramGB GB of video memory is below the 8 GB minimum. It may not run." }
 } elseif ($Gpu -eq "amd") {

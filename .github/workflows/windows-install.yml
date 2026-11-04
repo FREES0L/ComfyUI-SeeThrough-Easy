@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        gpu: [nvidia, amd]
+        gpu: [nvidia, nvidia_cu126, amd]
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
