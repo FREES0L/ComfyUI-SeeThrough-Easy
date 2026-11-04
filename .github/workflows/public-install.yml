@@ -15,9 +15,14 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
+      # The runner has no graphics card, so detection is overridden the way a
+      # helper would on a real PC. The branch under test stands in for master.
       - name: Paste the README line
         shell: powershell
-        run: irm https://raw.githubusercontent.com/FREES0L/ComfyUI-SeeThrough-Easy/master/windows/install.ps1 | iex
+        env:
+          SEETHROUGH_GPU: nvidia
+          SEETHROUGH_BRANCH: ${{ github.ref_name }}
+        run: irm https://raw.githubusercontent.com/FREES0L/ComfyUI-SeeThrough-Easy/${{ github.ref_name }}/windows/install.ps1 | iex
 
       - name: Check what a user ends up with
         shell: powershell

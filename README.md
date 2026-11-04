@@ -32,6 +32,8 @@ Everything goes into `C:\SeeThrough`. To uninstall, delete that folder and the t
 
 If the install stops halfway (internet dropped, PC restarted), run the same line again. It picks up where it left off.
 
+If the installer says it can't find a graphics card but there is one, name it in front of the same line: `$env:SEETHROUGH_GPU = "nvidia"; ` (or `"amd"`) followed by the `irm ...` line.
+
 ## Use it
 
 1. Double-click **SeeThrough** on the desktop. A black window opens, then the browser. Keep the black window open while you work.
