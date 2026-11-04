@@ -21,6 +21,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: A mistyped SEETHROUGH_GPU stops the install
+        if: matrix.gpu == 'amd'
+        shell: powershell
+        env:
+          SEETHROUGH_GPU: nvidai
+        run: |
+          $stopped = $false
+          try { & .\windows\install.ps1 -InstallDir C:\TypoTest -NodeSource $PWD -SkipModels -NoShortcut } catch { $stopped = $true; Write-Host "stopped as expected: $_" }
+          if (-not $stopped) { throw "install went ahead despite SEETHROUGH_GPU=nvidai" }
+          if (Test-Path C:\TypoTest) { throw "it created files before stopping" }
+
       - name: Run the installer
         shell: powershell
         run: |
