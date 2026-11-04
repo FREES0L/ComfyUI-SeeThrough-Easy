@@ -1,0 +1,63 @@
+name: Windows install test
+
+# Runs the real Windows installer on a clean GitHub Windows machine, once for the
+# Nvidia build and once for the AMD build of ComfyUI, then starts ComfyUI and checks
+# that the SeeThrough nodes, the example workflow and the example picture are there.
+# The runners have no graphics card, so ComfyUI runs with --cpu and no picture is
+# processed; that part is tested on a real GPU before each release.
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        gpu: [nvidia, nvidia_cu126, amd]
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run the installer
+        shell: powershell
+        run: |
+          $dir = "C:\SeeThrough"
+          & .\windows\install.ps1 -InstallDir $dir -Gpu ${{ matrix.gpu }} -NodeSource $PWD -SkipModels -NoShortcut
+
+      - name: Check installed files
+        shell: powershell
+        run: |
+          $c = "C:\SeeThrough\ComfyUI_windows_portable\ComfyUI"
+          foreach ($f in @("custom_nodes\ComfyUI-SeeThrough-Easy\nodes.py",
+                           "user\default\workflows\SeeThrough-Easy.json",
+                           "input\seethrough_example.png")) {
+            if (-not (Test-Path (Join-Path $c $f))) { throw "missing $f" }
+            Write-Host "ok  $f"
+          }
+          if (-not (Test-Path "C:\SeeThrough\Start SeeThrough.bat")) { throw "missing launcher" }
+          Get-Content "C:\SeeThrough\Start SeeThrough.bat"
+
+      - name: Start ComfyUI and check the nodes load
+        shell: powershell
+        run: |
+          $p = "C:\SeeThrough\ComfyUI_windows_portable"
+          $proc = Start-Process -FilePath "$p\python_embeded\python.exe" `
+            -ArgumentList "-s", "ComfyUI\main.py", "--cpu", "--port", "8188", "--disable-auto-launch" `
+            -WorkingDirectory $p -RedirectStandardOutput "$p\comfy_out.log" -RedirectStandardError "$p\comfy_err.log" -PassThru
+          $ok = $false
+          for ($i = 0; $i -lt 90; $i++) {
+            Start-Sleep 5
+            try { $info = Invoke-RestMethod "http://127.0.0.1:8188/object_info"; $ok = $true; break } catch {}
+            if ($proc.HasExited) { break }
+          }
+          Get-Content "$p\comfy_err.log" -Tail 60
+          if (-not $ok) { throw "ComfyUI did not start" }
+          $names = $info.PSObject.Properties.Name | Where-Object { $_ -like "SeeThrough_*" }
+          Write-Host "SeeThrough nodes: $($names -join ', ')"
+          if ($names.Count -ne 8) { throw "expected 8 SeeThrough nodes, got $($names.Count)" }
+          $wf = Invoke-RestMethod "http://127.0.0.1:8188/api/userdata/workflows%2FSeeThrough-Easy.json"
+          Write-Host "workflow served, $($wf.nodes.Count) nodes"
+          Stop-Process -Id $proc.Id -Force

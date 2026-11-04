@@ -1,5 +1,6 @@
 
 
+import os
 import torch
 import torch.nn as nn
 from torch import Tensor
@@ -422,7 +423,11 @@ class LamaFourier:
 
 def load_lama_mpe(device, use_mpe=True, large_arch: bool = False) -> LamaFourier:
     model = LamaFourier(build_discriminator=False, use_mpe=use_mpe, large_arch=large_arch)
-    sd = torch.hub.load_state_dict_from_url("https://huggingface.co/dreMaz/AnimeMangaInpainting/resolve/main/lama_large_512px.ckpt", map_location = 'cpu')
+    local_ckpt = os.environ.get("SEETHROUGH_LAMA_CKPT")  # set by ComfyUI-SeeThrough-Easy's nodes.py
+    if local_ckpt and os.path.isfile(local_ckpt):
+        sd = torch.load(local_ckpt, map_location='cpu', weights_only=True)
+    else:
+        sd = torch.hub.load_state_dict_from_url("https://huggingface.co/dreMaz/AnimeMangaInpainting/resolve/main/lama_large_512px.ckpt", map_location = 'cpu', weights_only=True)
     model.generator.load_state_dict(sd['gen_state_dict'])
     if use_mpe:
         model.mpe.load_state_dict(sd['str_state_dict'])

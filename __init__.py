@@ -1,5 +1,5 @@
 """
-ComfyUI-See-through: Anime Layer Decomposition from a Single Image
+ComfyUI-SeeThrough-Easy: See-through anime layer decomposition, easy-install fork of jtydhr88/ComfyUI-See-through
 
 Wraps the See-through research project as ComfyUI custom nodes.
 Paper: arxiv:2602.03749
@@ -20,4 +20,4 @@ except Exception as e:
     NODE_DISPLAY_NAME_MAPPINGS = {}
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
-__version__ = "0.2.2"
+__version__ = "1.0.0"

@@ -12,10 +12,16 @@ const { api } = window.comfyAPI.api;
 let agPsdLoaded = false;
 let agPsdLoadPromise = null;
 
+// ComfyUI loads extensions as ES modules, where document.currentScript is null,
+// so find the bundle next to this file through import.meta.url instead.
 const _ownScriptDir = (() => {
-    const src = document.currentScript?.src;
-    if (src) return src.substring(0, src.lastIndexOf("/") + 1);
-    return null;
+    try {
+        return new URL(".", import.meta.url).href;
+    } catch (e) {
+        const src = document.currentScript?.src;
+        if (src) return src.substring(0, src.lastIndexOf("/") + 1);
+        return null;
+    }
 })();
 
 async function ensureAgPsdLoaded() {
@@ -38,6 +44,7 @@ async function ensureAgPsdLoaded() {
             document.head.appendChild(script);
         } else {
             const variants = [
+                "ComfyUI-SeeThrough-Easy",
                 "ComfyUI-See-through",
                 "comfyui-see-through",
                 "ComfyUI-see-through",
@@ -101,7 +108,8 @@ async function createPSD(layerInfo, psdType) {
         const filename = layer[filenameKey];
         if (!filename) continue;
 
-        const url = api.apiURL(`/view?filename=${encodeURIComponent(filename)}&type=output&t=${Date.now()}`);
+        const sub = layer.subfolder ? `&subfolder=${encodeURIComponent(layer.subfolder)}` : "";
+        const url = api.apiURL(`/view?filename=${encodeURIComponent(filename)}${sub}&type=output&t=${Date.now()}`);
         const img = await loadImage(url);
 
         const lw = layer.right - layer.left;
@@ -149,6 +157,56 @@ async function createPSD(layerInfo, psdType) {
 
     console.log(`[SeeThrough] PSD downloaded: ${prefix}_${timestamp}${suffix}.psd`);
 }
+
+// Fetch a file from ComfyUI's output folder by its path relative to it.
+function outputURL(relPath) {
+    const i = relPath.lastIndexOf("/");
+    const filename = i >= 0 ? relPath.slice(i + 1) : relPath;
+    const sub = i >= 0 ? `&subfolder=${encodeURIComponent(relPath.slice(0, i))}` : "";
+    return api.apiURL(`/view?filename=${encodeURIComponent(filename)}${sub}&type=output&t=${Date.now()}`);
+}
+
+app.registerExtension({
+    name: "ComfyUI-SeeThrough-Easy.ExportLayers",
+
+    async nodeCreated(node) {
+        if (node.comfyClass !== "SeeThrough_ExportLayers") return;
+
+        const onExecuted = node.onExecuted;
+        node.onExecuted = function (message) {
+            onExecuted?.apply(this, arguments);
+            if (message?.seethrough_export?.length) node._seethroughInfo = message.seethrough_export[0];
+        };
+
+        const dlBtn = node.addWidget("button", "Download PSD", "Download PSD", async () => {
+            try {
+                dlBtn.name = "Generating PSD...";
+                let infoPath = node._seethroughInfo;
+                if (!infoPath) {
+                    const logResp = await fetch(outputURL("seethrough_export_info.log"));
+                    if (!logResp.ok) {
+                        alert("Run the workflow first, then press Download PSD.");
+                        return;
+                    }
+                    infoPath = (await logResp.text()).trim();
+                }
+                const infoResp = await fetch(outputURL(infoPath));
+                if (!infoResp.ok) {
+                    alert("Could not load the layer list. Run the workflow again.");
+                    return;
+                }
+                await createPSD(await infoResp.json(), "rgba");
+            } catch (error) {
+                console.error("[SeeThrough] Error:", error);
+                alert(`Failed to generate PSD: ${error.message}`);
+            } finally {
+                dlBtn.name = "Download PSD";
+            }
+        });
+        dlBtn.color = "#10B981";
+        dlBtn.bgcolor = "#059669";
+    },
+});
 
 app.registerExtension({
     name: "ComfyUI-See-through.SavePSD",
