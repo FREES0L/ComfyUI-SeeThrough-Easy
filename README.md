@@ -44,8 +44,9 @@ If the installer says it can't find a graphics card but there is one, name it in
 
 The results:
 
-- **Download PSD** on the last box saves a layered PSD to your Downloads folder.
+- **Download PSD** on the last box saves the layered PSD to your Downloads folder. The same PSD is also in the run's folder.
 - The **SeeThrough results** icon on the desktop opens the output folder. Each run makes a `seethrough\seethrough_<date>_<time>` folder with:
+  - `seethrough_<date>_<time>.psd` — the layered PSD, one layer per part, each cropped to the part and placed where it belongs
   - `layers\` — one PNG per part, all the same size as the picture, numbered back to front (`00` at the back)
   - `layers.json` — the part names, draw order and positions
   - `compare.png` — the input next to the stacked layers, to spot what's missing
@@ -66,7 +67,7 @@ Compared with the original node pack:
 - **Models download into `ComfyUI/models/SeeThrough/`**, in plain folders, instead of a hidden cache. Downloads resume after an interruption and are skipped once complete. `python seethrough_models.py --models-dir <path>` fetches them up front.
 - **`auto` defaults that fit the graphics card.** `group_offload: auto` keeps most of the model in system RAM on cards under 20 GB (a 12 GB card runs out of memory without it). `quant_mode: auto` uses the 4-bit models on Nvidia cards under 10 GB.
 - **`head_crop_pad` on Generate Layers.** The second pass crops around the head with a 20% margin, which cuts off horns and tall hats. 0.5 fixes it; the bundled workflow uses 0.5.
-- **SeeThrough Export Layers (clean)**, a new node. The original orders layers by one depth value per part, which puts eyelashes under the eye whites and ears in front of the face. This node orders every overlapping pair by which part actually matches the input picture, writes full-canvas PNGs with the padding cropped off, and has its own Download PSD button.
+- **SeeThrough Export Layers (clean)**, a new node. The original orders layers by one depth value per part, which puts eyelashes under the eye whites and ears in front of the face. This node orders every overlapping pair by which part actually matches the input picture, writes full-canvas PNGs with the padding cropped off, saves a layered PSD with every layer cropped to its part (`save_psd`, on by default, so runs queued through the API get one too), and has its own Download PSD button.
 - **A ready workflow** with the settings above and a note explaining each step.
 - Group offload follows ComfyUI's chosen device instead of a hardcoded `cuda`, `bitsandbytes` is optional (only needed for 4-bit mode, Nvidia only), and `diffusers>=0.37` is required so group offload is actually available.
 

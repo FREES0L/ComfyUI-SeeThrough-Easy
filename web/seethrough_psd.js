@@ -195,7 +195,24 @@ app.registerExtension({
                     alert("Could not load the layer list. Run the workflow again.");
                     return;
                 }
-                await createPSD(await infoResp.json(), "rgba");
+                const info = await infoResp.json();
+                if (info.psd_file) {
+                    // The export node already wrote the PSD (cropped layers): hand that file over.
+                    const psdResp = await fetch(outputURL(info.psd_file));
+                    if (psdResp.ok) {
+                        const url = URL.createObjectURL(await psdResp.blob());
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = info.psd_file.slice(info.psd_file.lastIndexOf("/") + 1);
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        return;
+                    }
+                    console.warn("[SeeThrough] Saved PSD not found, building one in the browser instead");
+                }
+                await createPSD(info, "rgba");
             } catch (error) {
                 console.error("[SeeThrough] Error:", error);
                 alert(`Failed to generate PSD: ${error.message}`);

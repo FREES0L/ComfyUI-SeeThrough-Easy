@@ -1106,7 +1106,8 @@ class SeeThrough_PartsToLayers:
 class SeeThrough_ExportLayers:
     """Save the parts as a clean, ready-to-use layer set: full-canvas PNGs
     numbered back to front in a draw order checked against the input image,
-    plus layers.json, preview sheets, a zip, and a Download PSD button."""
+    plus layers.json, preview sheets, a layered PSD, a zip, and a Download
+    PSD button."""
 
     @classmethod
     def INPUT_TYPES(s):
@@ -1120,6 +1121,9 @@ class SeeThrough_ExportLayers:
             },
             "optional": {
                 "image": ("IMAGE", {"tooltip": "Input image to check the draw order against. Leave unconnected to use the one the parts came from."}),
+                "save_psd": ("BOOLEAN", {"default": True,
+                                         "tooltip": "Also save a layered PSD next to the PNGs, every layer cropped to its part. "
+                                                    "The Download PSD button hands over this file."}),
             },
         }
 
@@ -1129,7 +1133,7 @@ class SeeThrough_ExportLayers:
     CATEGORY = "SeeThrough"
     OUTPUT_NODE = True
 
-    def export(self, parts, filename_prefix="seethrough", order="visibility", image=None):
+    def export(self, parts, filename_prefix="seethrough", order="visibility", image=None, save_psd=True):
         import json
 
         if image is not None:
@@ -1146,7 +1150,8 @@ class SeeThrough_ExportLayers:
         out_dir = os.path.join(out_root, rel_dir)
         os.makedirs(out_dir, exist_ok=True)
 
-        meta = export_layers(parts["tag2pinfo"], parts["frame_size"][0], src, out_dir, order=order, name=name)
+        meta = export_layers(parts["tag2pinfo"], parts["frame_size"][0], src, out_dir, order=order, name=name,
+                             save_psd=save_psd)
 
         # Info for the Download PSD button (same shape the Save PSD node writes).
         cw, ch = meta["canvas"]["width"], meta["canvas"]["height"]
@@ -1155,6 +1160,8 @@ class SeeThrough_ExportLayers:
                     "layers": [{"name": e["part"], "filename": os.path.basename(e["file"]),
                                 "subfolder": sub + "/layers",
                                 "left": 0, "top": 0, "right": cw, "bottom": ch} for e in meta["layers"]]}
+        if meta.get("psd"):
+            psd_info["psd_file"] = sub + "/" + meta["psd"]
         with open(os.path.join(out_dir, "psd_info.json"), "w", encoding="utf-8") as f:
             json.dump(psd_info, f, indent=2)
         with open(os.path.join(out_root, "seethrough_export_info.log"), "w", encoding="utf-8") as f:
