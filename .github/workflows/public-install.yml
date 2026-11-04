@@ -58,6 +58,7 @@ jobs:
             if ($proc.HasExited) { break }
           }
           Get-Content "$p\err.log" -Tail 40
+          "Installed size: {0:N1} GB" -f ((Get-ChildItem "C:\SeeThrough" -Recurse -File -Force | Measure-Object Length -Sum).Sum / 1GB)
           if (-not $ok) { throw "ComfyUI did not start" }
           $names = $info.PSObject.Properties.Name | Where-Object { $_ -like "SeeThrough_*" }
           Write-Host "SeeThrough nodes: $($names -join ', ')"

@@ -11,7 +11,7 @@ You need:
 - Windows 10 or 11, 64-bit
 - An **Nvidia** graphics card with 8 GB or more, or an **AMD Radeon RX 7000 / 9000** series card
 - 16 GB of RAM or more (32 GB is comfortable)
-- About 30 GB of free disk space on `C:`
+- About 25 GB of free disk space on `C:`
 - An up-to-date graphics driver ([Nvidia](https://www.nvidia.com/drivers), [AMD](https://www.amd.com/en/support/download/drivers.html))
 
 Then:

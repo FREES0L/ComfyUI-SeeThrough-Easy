@@ -102,11 +102,13 @@ if ($null -eq $free) { Fail "Drive $drive was not found. Pick another folder wit
 $freeGB = [math]::Round($free / 1GB)
 Info "Free space on ${drive}: $freeGB GB"
 $alreadyThere = Test-Path (Join-Path $InstallDir "ComfyUI_windows_portable\python_embeded\python.exe")
-$needGB = 30
-if ($SkipModels) { $needGB = 14 }
+# Measured footprint: ComfyUI unpacked plus pip packages, plus 12.6 GB of models
+# (the 2 GB archive is deleted after unpacking). 25 GB leaves some headroom.
+$needGB = 25
+if ($SkipModels) { $needGB = 12 }
 if ($alreadyThere) { $needGB = 0 }
 if (-not $SkipModels -and $alreadyThere) { $needGB = 14 }
-if ($freeGB -lt $needGB) { Fail "Needs about $needGB GB free on $drive (ComfyUI ~8 GB, models ~13 GB, plus room to unpack)." }
+if ($freeGB -lt $needGB) { Fail "Needs about $needGB GB free on $drive for ComfyUI and the models." }
 
 # ---------------------------------------------------------------- graphics card
 $cards = @(Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name })
