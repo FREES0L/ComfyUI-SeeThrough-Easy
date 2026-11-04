@@ -35,9 +35,14 @@ param(
 # `irm | iex` cannot pass parameters, so these environment variables can stand in:
 #   $env:SEETHROUGH_GPU = "nvidia"; irm ... | iex     (override graphics card detection)
 #   $env:SEETHROUGH_BRANCH = "some-branch"            (install the nodes from another branch)
-if ($Gpu -eq "auto" -and $env:SEETHROUGH_GPU) { $Gpu = $env:SEETHROUGH_GPU }
+if ($Gpu -eq "auto" -and $env:SEETHROUGH_GPU) {
+    # check before assigning: a value [ValidateSet] rejects would otherwise leave $Gpu on "auto"
+    if (@("nvidia", "nvidia_cu126", "amd", "intel") -notcontains $env:SEETHROUGH_GPU) {
+        throw "Unknown SEETHROUGH_GPU '$($env:SEETHROUGH_GPU)' (use nvidia, nvidia_cu126, amd or intel)"
+    }
+    $Gpu = $env:SEETHROUGH_GPU
+}
 if ($env:SEETHROUGH_BRANCH) { $Branch = $env:SEETHROUGH_BRANCH }
-if (@("auto", "nvidia", "nvidia_cu126", "amd", "intel") -notcontains $Gpu) { throw "Unknown GPU choice '$Gpu' (use nvidia, nvidia_cu126, amd or intel)" }
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"   # Invoke-WebRequest is very slow with the progress bar on
